@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "posteffectcontrol",
+  "version": "${version}",
+  "name": "PostEffectControl",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/posteffectcontrol/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "net.dvmn2.posteffectcontrol.client.PosteffectcontrolDataGenerator"
+    ],
+    "client": [
+      "net.dvmn2.posteffectcontrol.client.PosteffectcontrolClient"
+    ],
+    "main": [
+      "net.dvmn2.posteffectcontrol.Posteffectcontrol"
+    ]
+  },
+  "mixins": [
+    "posteffectcontrol.mixins.json",
+    {
+      "config": "posteffectcontrol.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
