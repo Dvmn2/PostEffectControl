@@ -1,0 +1,10 @@
+{
+  "posteffectcontrol.enabled": "PostEffectControl: эффекты включены.",
+  "posteffectcontrol.disabled": "PostEffectControl: эффекты выключены. Включить снова: /pec on",
+  "posteffectcontrol.max": "PostEffectControl: максимальная интенсивность эффектов — %s.",
+  "posteffectcontrol.noflash.on": "PostEffectControl: мигающие эффекты скрыты.",
+  "posteffectcontrol.noflash.off": "PostEffectControl: мигающие эффекты разрешены.",
+  "posteffectcontrol.packeffects.on": "PostEffectControl: сервер может использовать эффекты из ваших ресурспаков.",
+  "posteffectcontrol.packeffects.off": "PostEffectControl: эффекты из ресурспаков заблокированы.",
+  "posteffectcontrol.status": "PostEffectControl: включён=%s, макс. интенсивность=%s, скрывать мигающие=%s, эффекты из ресурспаков=%s, активных слоёв=%s"
+}

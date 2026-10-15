@@ -1,9 +1,13 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "net.dvmn2.posteffectcontrol.mixin.client",
+  "package": "net.dvmn2.posteffectcontrol.client.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "GameRendererMixin",
+    "PostEffectProcessorAccessor",
+    "PostEffectPassAccessor",
+    "ShaderLoaderMixin"
   ],
   "injectors": {
     "defaultRequire": 1
