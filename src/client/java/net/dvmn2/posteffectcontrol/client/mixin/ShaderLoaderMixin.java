@@ -9,11 +9,14 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** После каждой перезагрузки шейдеров сбрасываем кэш проверок эффектов. */
+/**
+ * Resets the cache of effect checks after every shader reload.
+ */
 @Mixin(ShaderLoader.class)
 public abstract class ShaderLoaderMixin {
 
-    @Inject(method = "apply(Lnet/minecraft/client/gl/ShaderLoader$Definitions;Lnet/minecraft/resource/ResourceManager;Lnet/minecraft/util/profiler/Profiler;)V",
+    @Inject(method = "apply(Lnet/minecraft/client/gl/ShaderLoader$Definitions;"
+            + "Lnet/minecraft/resource/ResourceManager;Lnet/minecraft/util/profiler/Profiler;)V",
             at = @At("TAIL"))
     private void posteffectcontrol$onApply(ShaderLoader.Definitions definitions, ResourceManager resourceManager,
                                            Profiler profiler, CallbackInfo ci) {

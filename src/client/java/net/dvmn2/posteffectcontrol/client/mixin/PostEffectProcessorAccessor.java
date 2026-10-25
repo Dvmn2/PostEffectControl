@@ -7,6 +7,9 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 import java.util.List;
 
+/**
+ * Access to the passes of a post effect processor.
+ */
 @Mixin(PostEffectProcessor.class)
 public interface PostEffectProcessorAccessor {
 

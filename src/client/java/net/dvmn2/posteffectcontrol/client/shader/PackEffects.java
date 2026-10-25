@@ -1,6 +1,5 @@
 package net.dvmn2.posteffectcontrol.client.shader;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -8,49 +7,79 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Эффекты, лежащие в ресурспаках клиента (установленных вручную или доставленных через ResourceControl).
+ * Effects that live in the player's resource packs (installed by hand or delivered by ResourceControl).
  * <p>
- * Эффект {@code ns:path} состоит из двух файлов ресурспака:
+ * An effect {@code ns:path} consists of two files in the pack:
  * <ul>
- *   <li>{@code assets/<ns>/post_effect/<path>.json} — обычный ванильный post_effect (шейдеры лежат в
+ *   <li>{@code assets/<ns>/post_effect/<path>.json}: an ordinary vanilla post_effect (the shaders are in
  *       {@code assets/<ns>/shaders/...});</li>
- *   <li>{@code assets/<ns>/posteffectcontrol/<path>.json} — описание для мода: название, флаги
- *       {@code flashing}/{@code over_hud}, значения по умолчанию и имена параметров.</li>
+ *   <li>{@code assets/<ns>/posteffectcontrol/<path>.json}: a description for the mod: name, the
+ *       {@code flashing} and {@code over_hud} flags, defaults and parameter names.</li>
  * </ul>
- * Реестр строится лениво и сбрасывается при каждой перезагрузке шейдеров ({@link #markDirty()}).
- * Флаги берутся из пака игрока, а не от сервера: сервер не может скрыть от игрока, что эффект мигает.
+ * The registry is built lazily and reset after every shader reload ({@link #markDirty()}). The flags come from
+ * the player's pack, not from the server: a server cannot hide from the player that an effect flashes.
  */
 public final class PackEffects {
 
     public static final String META_DIR = "posteffectcontrol";
     public static final String PARAMS_BLOCK = "EffectParams";
-    /** Лимит эффектов в реестре (и в пакете pe_caps). */
+
+    /**
+     * Limit of effects in the registry (and in the caps message).
+     */
     public static final int MAX_EFFECTS = 48;
-    /** Идентификатор {@code ns:path} должен помещаться в сетевые строки и ключи слоёв. */
+
+    /**
+     * An id {@code ns:path} must fit into network strings and layer keys.
+     */
     public static final int MAX_ID_LENGTH = 80;
     public static final int MAX_PARAMS = 8;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger("posteffectcontrol");
     private static final Pattern PARAM_NAME = Pattern.compile("[a-z0-9_]{1,24}");
+    private static final int MAX_DISPLAY_NAME_CHARS = 48;
+    private static final int RGB_MASK = 0xFFFFFF;
+    private static final int HEX_RADIX = 16;
+    private static final String JSON_SUFFIX = ".json";
 
+    /**
+     * A named parameter of an effect.
+     */
     public record Param(String name, int index, float def, float min, float max) {
     }
 
+    /**
+     * Description of an effect from a resource pack.
+     */
     public record Meta(Identifier id, String displayName, boolean flashing, boolean overHud,
                        float defaultIntensity, int defaultColor, List<Param> params) {
 
-        /** Значение параметра pN по умолчанию (0, если параметр не описан). */
+        /**
+         * Returns the default of parameter pN, or 0 when the parameter is not described.
+         */
         public float defaultParam(int index) {
-            for (Param p : params) {
-                if (p.index() == index) {
-                    return p.def();
+            for (Param param : params) {
+                if (param.index() == index) {
+                    return param.def();
                 }
             }
             return 0f;
@@ -59,28 +88,41 @@ public final class PackEffects {
 
     private static final Map<String, Meta> REGISTRY = new LinkedHashMap<>();
     private static boolean dirty = true;
+    private static int revision;
 
     private PackEffects() {
     }
 
-    /** Ресурсы изменились — реестр нужно перечитать при следующем обращении. */
+    /**
+     * Resources changed: the registry is re-read on the next access.
+     */
     public static synchronized void markDirty() {
         dirty = true;
+        revision++;
     }
 
-    public static synchronized Map<String, Meta> all(MinecraftClient client) {
+    /**
+     * Returns a number that grows every time the resources changed.
+     */
+    public static synchronized int getRevision() {
+        return revision;
+    }
+
+    /**
+     * Returns every effect found in the resource packs.
+     */
+    public static synchronized Map<String, Meta> getAll(MinecraftClient client) {
         rebuildIfNeeded(client);
         return new LinkedHashMap<>(REGISTRY);
     }
 
-    public static synchronized Meta get(MinecraftClient client, String id) {
+    /**
+     * Finds one effect, or null when no pack has it.
+     */
+    public static synchronized @Nullable Meta find(MinecraftClient client, String id) {
         rebuildIfNeeded(client);
         return REGISTRY.get(id);
     }
-
-    // ------------------------------------------------------------------
-    // Построение реестра
-    // ------------------------------------------------------------------
 
     private static void rebuildIfNeeded(MinecraftClient client) {
         if (!dirty) {
@@ -95,152 +137,126 @@ public final class PackEffects {
 
         Map<Identifier, Resource> found;
         try {
-            found = manager.findResources(META_DIR, id -> id.getPath().endsWith(".json"));
+            found = manager.findResources(META_DIR, id -> id.getPath().endsWith(JSON_SUFFIX));
         } catch (RuntimeException ex) {
-            System.err.println("[PostEffectControl] Не удалось просмотреть ресурсы: " + ex);
+            LOGGER.warn("Could not scan resources for effects", ex);
             return;
         }
         List<Identifier> files = new ArrayList<>(found.keySet());
         files.sort(Comparator.comparing(Identifier::toString));
 
         for (Identifier file : files) {
-            String path = file.getPath();
-            int from = META_DIR.length() + 1;
-            int to = path.length() - ".json".length();
-            if (!path.startsWith(META_DIR + "/") || to <= from) {
-                continue;
-            }
-            String ns = file.getNamespace();
-            if (ns.equals("minecraft")) {
-                continue; // короткие имена без namespace зарезервированы за встроенными эффектами
-            }
-            String rel = path.substring(from, to);
-            Identifier id = Identifier.of(ns, rel);
-            if (id.toString().length() > MAX_ID_LENGTH) {
-                System.err.println("[PostEffectControl] " + id + ": идентификатор длиннее " + MAX_ID_LENGTH + " символов, пропущен");
-                continue;
-            }
-            if (manager.getResource(Identifier.of(ns, "post_effect/" + rel + ".json")).isEmpty()) {
-                System.err.println("[PostEffectControl] " + id + ": нет файла post_effect/" + rel + ".json, эффект пропущен");
-                continue;
-            }
             if (REGISTRY.size() >= MAX_EFFECTS) {
-                System.err.println("[PostEffectControl] Найдено больше " + MAX_EFFECTS + " эффектов, остальные пропущены");
+                LOGGER.warn("More than {} effects found, the rest are skipped", MAX_EFFECTS);
                 break;
             }
-            try (Reader reader = new InputStreamReader(found.get(file).getInputStream(), StandardCharsets.UTF_8)) {
-                REGISTRY.put(id.toString(), parseMeta(id, JsonParser.parseReader(reader)));
-            } catch (Exception ex) {
-                System.err.println("[PostEffectControl] " + file + ": " + ex);
+            Meta meta = readEffect(manager, file, found.get(file));
+            if (meta != null) {
+                REGISTRY.put(meta.id().toString(), meta);
             }
+        }
+    }
+
+    private static @Nullable Meta readEffect(ResourceManager manager, Identifier file, Resource resource) {
+        String path = file.getPath();
+        int from = META_DIR.length() + 1;
+        int to = path.length() - JSON_SUFFIX.length();
+        if (!path.startsWith(META_DIR + "/") || to <= from) {
+            return null;
+        }
+        String namespace = file.getNamespace();
+        if (namespace.equals("minecraft")) {
+            return null; // short names without a namespace are reserved for built-in effects
+        }
+        String relative = path.substring(from, to);
+        Identifier id = Identifier.of(namespace, relative);
+        if (id.toString().length() > MAX_ID_LENGTH) {
+            LOGGER.warn("{}: the id is longer than {} characters, skipped", id, MAX_ID_LENGTH);
+            return null;
+        }
+        if (manager.getResource(Identifier.of(namespace, "post_effect/" + relative + JSON_SUFFIX)).isEmpty()) {
+            LOGGER.warn("{}: post_effect/{}.json is missing, the effect is skipped", id, relative);
+            return null;
+        }
+        try (Reader reader = new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)) {
+            return parseMeta(id, JsonParser.parseReader(reader));
+        } catch (IOException | RuntimeException ex) {
+            // A broken description in a resource pack only skips this effect.
+            LOGGER.warn("{}: could not read the description", file, ex);
+            return null;
         }
     }
 
     private static Meta parseMeta(Identifier id, JsonElement element) {
-        JsonObject o = element.getAsJsonObject();
-        String name = o.has("display_name") ? o.get("display_name").getAsString() : id.toString();
-        name = sanitize(name, 48);
-        boolean flashing = o.has("flashing") && o.get("flashing").getAsBoolean();
-        boolean overHud = o.has("over_hud") && o.get("over_hud").getAsBoolean();
-        float intensity = o.has("default_intensity") ? clamp01(o.get("default_intensity").getAsFloat()) : 1f;
-        int color = o.has("default_color") ? parseColor(o.get("default_color")) : 0xFFFFFF;
+        JsonObject object = element.getAsJsonObject();
+        String name = object.has("display_name") ? object.get("display_name").getAsString() : id.toString();
+        boolean flashing = object.has("flashing") && object.get("flashing").getAsBoolean();
+        boolean overHud = object.has("over_hud") && object.get("over_hud").getAsBoolean();
+        float intensity = object.has("default_intensity")
+                ? clamp01(object.get("default_intensity").getAsFloat()) : 1f;
+        int color = object.has("default_color") ? parseColor(object.get("default_color")) : RGB_MASK;
 
         List<Param> params = new ArrayList<>();
-        if (o.has("params") && o.get("params").isJsonObject()) {
+        if (object.has("params") && object.get("params").isJsonObject()) {
             Set<Integer> usedIndexes = new HashSet<>();
-            for (Map.Entry<String, JsonElement> e : o.getAsJsonObject("params").entrySet()) {
-                String pname = e.getKey().toLowerCase(Locale.ROOT);
-                if (!PARAM_NAME.matcher(pname).matches() || !e.getValue().isJsonObject() || params.size() >= MAX_PARAMS) {
-                    continue;
+            for (Map.Entry<String, JsonElement> entry : object.getAsJsonObject("params").entrySet()) {
+                Param param = parseParam(entry.getKey(), entry.getValue(), params.size(), usedIndexes);
+                if (param != null) {
+                    params.add(param);
                 }
-                JsonObject p = e.getValue().getAsJsonObject();
-                int index = p.has("index") ? p.get("index").getAsInt() : params.size();
-                if (index < 0 || index >= MAX_PARAMS || !usedIndexes.add(index)) {
-                    continue;
-                }
-                float def = finite(p, "default", 0f);
-                float min = finite(p, "min", 0f);
-                float max = finite(p, "max", 1f);
-                params.add(new Param(pname, index, def, Math.min(min, max), Math.max(min, max)));
             }
         }
-        return new Meta(id, name, flashing, overHud, intensity, color, List.copyOf(params));
+        return new Meta(id, sanitize(name), flashing, overHud, intensity, color, List.copyOf(params));
     }
 
-    private static float finite(JsonObject o, String field, float fallback) {
-        if (!o.has(field)) {
+    private static @Nullable Param parseParam(String rawName, JsonElement value, int position,
+                                              Set<Integer> usedIndexes) {
+        String name = rawName.toLowerCase(Locale.ROOT);
+        if (!PARAM_NAME.matcher(name).matches() || !value.isJsonObject() || position >= MAX_PARAMS) {
+            return null;
+        }
+        JsonObject object = value.getAsJsonObject();
+        int index = object.has("index") ? object.get("index").getAsInt() : position;
+        if (index < 0 || index >= MAX_PARAMS || !usedIndexes.add(index)) {
+            return null;
+        }
+        float def = finite(object, "default", 0f);
+        float min = finite(object, "min", 0f);
+        float max = finite(object, "max", 1f);
+        return new Param(name, index, def, Math.min(min, max), Math.max(min, max));
+    }
+
+    private static float finite(JsonObject object, String field, float fallback) {
+        if (!object.has(field)) {
             return fallback;
         }
-        float v = o.get(field).getAsFloat();
-        return Float.isFinite(v) ? v : fallback;
+        float value = object.get(field).getAsFloat();
+        return Float.isFinite(value) ? value : fallback;
     }
 
-    private static int parseColor(JsonElement el) {
-        if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isNumber()) {
-            return el.getAsInt() & 0xFFFFFF;
+    private static int parseColor(JsonElement element) {
+        if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
+            return element.getAsInt() & RGB_MASK;
         }
-        String s = el.getAsString().trim();
-        if (s.startsWith("#")) {
-            s = s.substring(1);
-        } else if (s.startsWith("0x") || s.startsWith("0X")) {
-            s = s.substring(2);
+        String text = element.getAsString().trim();
+        if (text.startsWith("#")) {
+            text = text.substring(1);
+        } else if (text.startsWith("0x") || text.startsWith("0X")) {
+            text = text.substring(2);
         }
-        return Integer.parseInt(s, 16) & 0xFFFFFF;
+        return Integer.parseInt(text, HEX_RADIX) & RGB_MASK;
     }
 
-    private static float clamp01(float v) {
-        return Float.isFinite(v) ? Math.max(0f, Math.min(1f, v)) : 1f;
+    private static float clamp01(float value) {
+        return Float.isFinite(value) ? Math.max(0f, Math.min(1f, value)) : 1f;
     }
 
-    private static String sanitize(String s, int max) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < s.length() && sb.length() < max; i++) {
-            char c = s.charAt(i);
-            sb.append(c < 0x20 ? ' ' : c);
+    private static String sanitize(String text) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < text.length() && builder.length() < MAX_DISPLAY_NAME_CHARS; i++) {
+            char c = text.charAt(i);
+            builder.append(c < ' ' ? ' ' : c);
         }
-        return sb.toString().trim();
-    }
-
-    // ------------------------------------------------------------------
-    // Проходы для проверки компиляции
-    // ------------------------------------------------------------------
-
-    /**
-     * Читает проходы из post_effect JSON эффекта. Пустой список — файла нет или он не разобрался.
-     */
-    public static List<PassInfo> readPasses(MinecraftClient client, Identifier effectId) {
-        Identifier file = Identifier.of(effectId.getNamespace(), "post_effect/" + effectId.getPath() + ".json");
-        Optional<Resource> resource = client.getResourceManager().getResource(file);
-        if (resource.isEmpty()) {
-            return List.of();
-        }
-        try (Reader reader = new InputStreamReader(resource.get().getInputStream(), StandardCharsets.UTF_8)) {
-            JsonObject root = JsonParser.parseReader(reader).getAsJsonObject();
-            List<PassInfo> list = new ArrayList<>();
-            for (JsonElement el : root.getAsJsonArray("passes")) {
-                JsonObject p = el.getAsJsonObject();
-                Identifier vertex = Identifier.tryParse(p.get("vertex_shader").getAsString());
-                Identifier fragment = Identifier.tryParse(p.get("fragment_shader").getAsString());
-                if (vertex == null || fragment == null) {
-                    return List.of();
-                }
-                List<String> samplers = new ArrayList<>();
-                if (p.has("inputs")) {
-                    JsonArray inputs = p.getAsJsonArray("inputs");
-                    for (JsonElement in : inputs) {
-                        samplers.add(in.getAsJsonObject().get("sampler_name").getAsString());
-                    }
-                }
-                List<String> blocks = new ArrayList<>();
-                if (p.has("uniforms") && p.get("uniforms").isJsonObject()) {
-                    blocks.addAll(p.getAsJsonObject("uniforms").keySet());
-                }
-                list.add(new PassInfo(vertex, fragment, List.copyOf(samplers), List.copyOf(blocks)));
-            }
-            return list;
-        } catch (Exception ex) {
-            System.err.println("[PostEffectControl] Не удалось прочитать " + file + ": " + ex.getMessage());
-            return List.of();
-        }
+        return builder.toString().trim();
     }
 }

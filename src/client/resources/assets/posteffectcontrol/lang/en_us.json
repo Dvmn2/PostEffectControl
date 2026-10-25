@@ -1,0 +1,14 @@
+{
+  "posteffectcontrol.enabled": "PostEffectControl: effects enabled.",
+  "posteffectcontrol.disabled": "PostEffectControl: effects disabled. Use /posteffectcontrol on to enable them again.",
+  "posteffectcontrol.max": "PostEffectControl: maximum effect intensity set to %s.",
+  "posteffectcontrol.noflash.on": "PostEffectControl: flashing effects are now hidden.",
+  "posteffectcontrol.noflash.off": "PostEffectControl: flashing effects are allowed.",
+  "posteffectcontrol.packeffects.on": "PostEffectControl: the server may use effects from your resource packs. Their names and parameters are sent to the server.",
+  "posteffectcontrol.packeffects.off": "PostEffectControl: effects from your resource packs are not used and not reported to the server.",
+  "posteffectcontrol.status": "PostEffectControl: effects %s, max intensity %s, hide flashing %s, effects from resource packs %s, active layers %s.",
+  "posteffectcontrol.state.enabled": "enabled",
+  "posteffectcontrol.state.disabled": "disabled",
+  "posteffectcontrol.yes": "yes",
+  "posteffectcontrol.no": "no"
+}

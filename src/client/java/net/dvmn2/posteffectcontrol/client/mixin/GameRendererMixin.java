@@ -10,9 +10,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Две точки рендера:
- * 1) сразу после мира, до HUD (как ванильный постпроцессор) — эффекты «под HUD»;
- * 2) после отрисовки GUI — эффекты с флагом overHud.
+ * Two render points: right after the world and before the HUD (like the vanilla post processor) for effects
+ * under the HUD, and after the GUI for effects with the over-HUD flag.
  */
 @Mixin(GameRenderer.class)
 public abstract class GameRendererMixin {
@@ -27,7 +26,8 @@ public abstract class GameRendererMixin {
 
     @Inject(method = "render(Lnet/minecraft/client/render/RenderTickCounter;Z)V",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/gui/render/GuiRenderer;render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V",
+                    target = "Lnet/minecraft/client/gui/render/GuiRenderer;"
+                            + "render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V",
                     shift = At.Shift.AFTER))
     private void posteffectcontrol$afterGui(RenderTickCounter tickCounter, boolean tick, CallbackInfo ci) {
         EffectRenderer.render(MinecraftClient.getInstance(), true);

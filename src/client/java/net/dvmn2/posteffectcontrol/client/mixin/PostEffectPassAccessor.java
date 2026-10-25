@@ -7,6 +7,9 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 
 import java.util.Map;
 
+/**
+ * Access to the uniform buffers of a post effect pass.
+ */
 @Mixin(PostEffectPass.class)
 public interface PostEffectPassAccessor {
 

@@ -1,128 +1,88 @@
 # PostEffectControl
 
-Связка **PostEffectControlPlugin** (Paper 1.21.11) + **PostEffectControl** (Fabric 1.21.11, клиент):
-администратор выдаёт отдельным игрокам постэффекты (заморозка, блюр, глитч, ...) и эффекты из ресурспаков.
+Fabric client mod that draws post-processing effects (built-in ones and effects from resource packs) sent by the server. Companion plugin: `PostEffectControlPlugin`.
 
-Шейдеры по сети **не передаются**. Эффект из ресурспака берётся из ресурсов клиента: пак установлен игроком
-вручную или доставлен через **ResourceControl**. Проекты независимы; единственная связь — необязательная
-интеграция (см. ниже).
+## Requirements
+- Minecraft 1.21.11, Java 21
+- Fabric Loader >= 0.19.5, Fabric API (built against `0.141.6+1.21.11`)
+- Companion plugin `PostEffectControlPlugin` >= 2.0.0 (protocol 4) on the server
 
-## Установка
-1. Плагин: `./gradlew build` в `PostEffectControlPlugin/` -> jar в `plugins/`.
-2. Мод: `./gradlew build` в `PostEffectControl/` -> jar в `mods/` клиента (нужен Fabric API).
-3. Игрок без мода просто не видит эффекты (кик включается `settings.require-client-mod: true`, исключение — право `posteffect.bypass`).
-
-## Команды (право `posteffect.admin`, алиас `/postfx`)
+## Build and run
+```bash
+./gradlew build      # build/libs/PostEffectControl-<version>.jar
+./gradlew runClient  # Minecraft 1.21.11 dev client
 ```
-/posteffect give <игроки> <эффект|пресет> [длительность] [опции]
-/posteffect remove <игроки> <эффект|пресет>
-/posteffect clear <игроки>
-/posteffect get <игрок>        — активные эффекты + статус клиента (применилось ли, Iris, ошибки)
-/posteffect list | info <эффект> | reload
-```
-Длительность: `30`, `30s`, `5m`, `1h30m`, `inf`. Опции: `intensity=0.8 color=#66ccff fadein=1s fadeout=2s p0..p7=число`
-или имя параметра (`blur=0.8`, `strength=0.5`; смотри `/posteffect info <эффект>`).
 
-Эффект задаётся ресурсным идентификатором: без namespace (`freeze`) — встроенный эффект или пресет,
-с namespace (`example:tint`) — эффект из ресурспака клиента.
+## Architecture
+Package `net.dvmn2.posteffectcontrol.client` (source set `client`; `src/main` holds only `fabric.mod.json`):
 
-```
-/posteffect give Steve freeze 30s
-/posteffect give @a vignette inf color=#ff0000 radius=0.2
-/posteffect give Steve example:tint 1m strength=0.8 color=#ff8800
-```
-Встроенные: freeze, blur, grayscale, sepia, invert, pixelate, vignette, wobble, chromatic, glitch (мигающий), crt, heartbeat.
-
-## Эффекты из ресурспаков
-Эффект `ns:path` — это два файла в ресурспаке (готовый пример: `examples/example_tint_pack/`):
-
-| Файл | Назначение |
+| Class | Responsibility |
 |---|---|
-| `assets/<ns>/post_effect/<path>.json` | обычный ванильный post_effect; шейдеры лежат в `assets/<ns>/shaders/...` |
-| `assets/<ns>/posteffectcontrol/<path>.json` | описание для мода: название, флаги, значения по умолчанию, имена параметров |
+| `PostEffectControlClient` | entry point: registers payloads, receivers, events and the command; holds `MOD_ID` |
+| `PostEffectControlConfig` | player settings (`config/posteffectcontrol.json`); the server cannot override them |
+| `command.PostEffectControlCommand` | `/posteffectcontrol` (alias `/pec`): status, off, on, max, noflash, packeffects |
+| `mixin.GameRendererMixin` | two render points: after the world (before the HUD) and after the GUI (over-HUD effects) |
+| `mixin.ShaderLoaderMixin` | calls `EffectRenderer.onShadersReloaded()` after every shader reload |
+| `mixin.PostEffectProcessorAccessor`, `PostEffectPassAccessor` | access to the passes and uniform buffers of a vanilla post effect |
+| `network.SyncPayload`, `StatusPayload`, `CapsPayload` | packets and their codecs (format in Javadoc) |
+| `network.PostEffectControlProtocol` | `PROTOCOL` constant |
+| `state.ActiveEffects`, `EffectInstance` | active layers, ordering by priority, fade envelope |
+| `state.EffectFailures` | effect errors reported to the server |
+| `shader.PackEffects` | registry of effects found in the player's resource packs |
+| `shader.PassReader`, `PassInfo` | reads the passes of a post_effect JSON |
+| `render.EffectRenderer` | draws the layers; guards the render hook |
+| `render.EffectValidator` | checks that an effect's chain exists and its shaders compile |
+| `render.UniformWriter` | replaces the `EffectParams` uniform block every frame |
+| `sync.SyncManager` | applies server messages, sends the effect list (caps) and the status |
+| `util.AtomicFiles` | atomic file writes |
 
-Файл описания (все поля необязательны):
-```json
-{
-  "display_name": "Example tint",
-  "flashing": false,
-  "over_hud": false,
-  "default_intensity": 1.0,
-  "default_color": "#ff8800",
-  "params": {
-    "strength": { "index": 0, "default": 0.6, "min": 0.0, "max": 1.0 }
-  }
-}
-```
-* `flashing` — эффект мигает; такие эффекты скрываются при `/pec noflash true`. Флаг берётся из пака игрока,
-  сервер его подменить не может.
-* `over_hud` — рисовать поверх HUD.
-* `params` — до 8 именованных параметров; `index` — номер `pN` в шейдере.
+Threading: everything runs on the client thread (messages are handed over with `client.execute`, rendering is on the same thread). The mod starts no threads of its own.
 
-**Контракт шейдера.** Чтобы мод передавал значения, в проходе post_effect JSON объявляется uniform-блок `EffectParams`
-из четырёх `vec4` (так же, как у встроенных эффектов, см. `assets/posteffectcontrol/post_effect/fx/*.json` в моде):
-```
-layout(std140) uniform EffectParams {
-    vec4 Control;   // x = итоговая интенсивность 0..1 (с учётом fade), y = время (с), w = seed
-    vec4 Color;     // rgb = цвет
-    vec4 Params;    // p0..p3
-    vec4 Params2;   // p4..p7
-};
-```
-Вершинный шейдер можно взять мода: `posteffectcontrol:post/quad`, последний проход-копию — `posteffectcontrol:post/blit`.
-Проход без блока `EffectParams` тоже допустим — он просто не получит параметры.
+Lifecycle:
+1. `onInitializeClient`: create `SyncManager`, register payload types, receivers, `JOIN`, `DISCONNECT`, tick event and the command.
+2. On a `pe_sync` message: `ActiveEffects.apply`, then an immediate status.
+3. Every tick: when resources changed (`PackEffects.getRevision()`) and no loading overlay is shown, the effect list is sent again; the status is refreshed once a second.
+4. `DISCONNECT`: active layers and failures are cleared.
 
-Мод находит эффекты по папке `posteffectcontrol/` во всех ресурспаках (namespace `minecraft` зарезервирован за
-короткими именами встроенных эффектов) и после каждой перезагрузки ресурсов отправляет серверу список доступных эффектов
-(`pe_caps`). Поэтому `/posteffect give` сразу сообщает, что у игрока нет нужного эффекта, а имена параметров проверяются
-по описанию из пака игрока. Если эффект появится у клиента позже (пак ещё скачивается) — он включится сам.
+## Public API
+None.
 
-Перед первым показом мод проверяет компиляцию шейдеров: ошибка в чужом шейдере не сбрасывает ресурспаки игрока,
-а попадает в статус (`/posteffect get`). Пак, содержащий шейдеры, в ResourceControl нужно разрешить
-(`settings.allow-shaders: true` в ResourceControlPlugin).
+## Protocol
+| Channel | Direction | Protocol | Format |
+|---|---|---|---|
+| `dvmn2:pe_sync` | S2C | 4 | `SyncPayload` Javadoc |
+| `dvmn2:pe_status` | C2S | 4 | `StatusPayload` Javadoc |
+| `dvmn2:pe_caps` | C2S | 4 | `CapsPayload` Javadoc |
 
-## Интеграция с ResourceControl (необязательно)
-Если на сервере стоит ResourceControlPlugin с `ResourceControlApi`, в `config.yml` можно привязать эффекты к пакам:
-```yaml
-resource-packs:
-  - id: example            # namespace или полный id эффекта (точный id приоритетнее)
-    pack: example-shaders  # имя пака в /resourcecontrol pack list
-```
-Если у игрока нет такого эффекта, пак выдаётся ему временно и снимается, когда эффект закончился или снят.
-Если пак уже установлен у игрока (вручную или через ResourceControl) — ничего не выдаётся. Без ResourceControlPlugin
-всё остальное работает как обычно (вызовы идут через рефлексию, общих зависимостей при компиляции нет).
+Compatibility rules:
+- The first field of every packet is a VarInt protocol version; `PostEffectControlProtocol.PROTOCOL` must equal the plugin's `SyncManager.PROTOCOL` and is increased on every format change.
+- A packet with another protocol is ignored silently. Mod 2.x works only with plugin 2.x.
+- A packet that fails to decode becomes a packet with `INVALID_PROTOCOL` (the rest of the buffer is skipped), so a malformed message never disconnects the player.
+- Registering the `pe_sync` receiver makes the server see the mod as installed.
 
-## Пресеты
-`presets:` в `config.yml` — набор слоёв встроенных эффектов и эффектов из ресурспаков (`effect: "example:tint"`).
-Параметры слоя — по имени из описания эффекта или `p0..p7`.
+## Data and files
+| File | Format | Version | Content |
+|---|---|---|---|
+| `config/posteffectcontrol.json` | JSON | none | `enabled` (default `true`), `maxIntensity` (`1.0`, range 0..1), `reduceFlashing` (`false`), `allowPackEffects` (`false`) |
 
-## Приоритеты слоёв
-Порядок наложения не зависит от очерёдности выдачи. В `config.yml` плагина:
-```yaml
-priorities:
-  vignette: 100            # всегда поверх остальных
-  "pectest:wave": 50
-  blur: -10                # всегда под остальными
-```
-Слои рисуются по возрастанию числа: больший приоритет обрабатывает уже готовую картинку нижних слоёв (блюр выше виньетки
-размоет и её). Не указанные эффекты = 0; при равном приоритете выше тот, что выдан позже. Допустимо целое -1000..1000.
-У слоёв пресета своего приоритета нет — берётся приоритет их эффектов. Слои `over_hud` сравниваются только между собой.
-Текущий приоритет эффекта виден в `/posteffect info <эффект>`; изменения применяются по `/posteffect reload`.
+The file is written atomically. Unknown or invalid values fall back to defaults (`maxIntensity` is clamped into 0..1). There is no migration from 1.x. The mod keeps no cache.
 
-## Защита игрока (клиентские команды)
-`/pec off|on|status`, `/pec max <0..1>`, `/pec noflash <true|false>`, `/pec packeffects <true|false>`
-(разрешить серверу использовать эффекты из ваших ресурспаков). Сервер эти настройки обойти не может.
+Built-in effects are mod resources: `assets/posteffectcontrol/post_effect/fx/<name>.json` and `assets/posteffectcontrol/shaders/post/fx/<name>.fsh` (shared `quad.vsh` and `blit.fsh`). Their descriptions must match the plugin's `EffectRegistry`.
 
-## Java API
-`Bukkit.getServicesManager().load(PostEffectApi.class)` -> `apply/remove/clear/hasMod`. Имя эффекта — как в команде
-(`freeze` или `ns:path`).
+Pack effect format (an effect `ns:path` is two files in a resource pack):
+- `assets/<ns>/post_effect/<path>.json`: an ordinary vanilla post_effect chain (shaders in `assets/<ns>/shaders/...`);
+- `assets/<ns>/posteffectcontrol/<path>.json`: `display_name`, `flashing`, `over_hud`, `default_intensity` (0..1), `default_color` (`#rrggbb` or a number) and `params` (name to `{ index, default, min, max }`, up to 8, names `[a-z0-9_]{1,24}`).
 
-## Протокол (protocol = 3)
-S2C `dvmn2:pe_sync` (полный набор слоёв), C2S `dvmn2:pe_status`, C2S `dvmn2:pe_caps` (эффекты из ресурспаков).
-Форматы — в javadoc `SyncPayload`, `StatusPayload`, `CapsPayload` и `NetworkManager`.
-Версия 1 (передача шейдеров по сети, каналы `pe_shader`/`pe_request`) удалена; мод и плагин нужно обновлять вместе (версии с разным `protocol` не совместимы).
+Shader contract: one uniform block `EffectParams` in std140 layout, four `vec4`: `(intensity, time, 0, seed)`, `(r, g, b, 1)`, `(p0..p3)`, `(p4..p7)`.
 
-## Ограничения
-* Эффекты рисуются до HUD; с `over_hud: true` — поверх всего.
-* При активном шейдерпаке Iris постэффекты могут не работать — клиент сообщает об Iris в `/posteffect get`.
-* Эффект из ресурспака, которого нет у клиента, не показывается; время эффекта при этом идёт на сервере.
+## Conventions and constraints
+- The flashing and over-HUD flags of an effect come from the player's own resources (built-in: `glitch` is flashing). The server cannot hide that an effect flashes, and `reduceFlashing` hides all flashing effects.
+- `maxIntensity` caps the strength of every layer, `enabled` stops drawing (timers keep running), and `allowPackEffects` is off by default: until the player allows it, no pack effect is drawn and the effect list is not reported to the server.
+- An effect is validated before its first use (chain exists, shaders compile) because an error while loading a post chain in the vanilla shader loader resets the player's resource packs. Results are cached until the next shader reload; failed effects are skipped and reported in the status.
+- `EffectRenderer.render` catches errors, logs once and switches drawing off until the game restarts instead of failing every frame.
+- A layer removed by the server fades out smoothly instead of disappearing; the drawing order is by priority with a stable sort.
+- Effect ids from the server are accepted only if they match a strict pattern (built-in) or exist in the player's resources (pack effects), because they go into `Identifier`s and shader paths.
+- The command root is the same as the server plugin's `/posteffectcontrol`; Fabric forwards subcommands unknown to the client to the server. `/pec` is a client-only alias.
+
+## License
+All rights reserved.

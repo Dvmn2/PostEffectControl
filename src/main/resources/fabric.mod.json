@@ -4,17 +4,12 @@
   "version": "${version}",
   "name": "PostEffectControl",
   "description": "Per-player post-processing effects (freeze, blur, glitch, effects from resource packs) pushed by the PostEffectControlPlugin server plugin.",
-  "authors": [],
+  "authors": ["DVMN2"],
   "contact": {},
   "license": "All-Rights-Reserved",
   "environment": "client",
   "entrypoints": {
-    "client": [
-      "net.dvmn2.posteffectcontrol.client.PostEffectControlClient"
-    ],
-    "main": [
-      "net.dvmn2.posteffectcontrol.PostEffectControl"
-    ]
+    "client": ["net.dvmn2.posteffectcontrol.client.PostEffectControlClient"]
   },
   "mixins": [
     {
